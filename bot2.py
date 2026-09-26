@@ -52,6 +52,13 @@ async def init_db():
             )
         """)
         
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         await db.commit()
 
 
@@ -110,6 +117,32 @@ async def get_setting(key: str, default: str = None) -> str:
         row = await cur.fetchone()
         return row[0] if row else default
 
+# ============ АДМИНЫ ============
+async def is_admin(user_id: int) -> bool:
+    """Проверяет, есть ли пользователь в списке админов (БД или .env)."""
+    if user_id in ADMIN_USER_IDS:
+        return True
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,))
+        return await cur.fetchone() is not None
+
+
+async def add_admin(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,))
+        await db.commit()
+
+
+async def remove_admin(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM admins WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def list_admins():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT user_id FROM admins ORDER BY added_at")
+        return await cur.fetchall()
     
 # ============ КУРСЫ ============
 async def build_kurs_text():
@@ -562,7 +595,7 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
 @dp.message(Command("setkurs"))
 async def cmd_setkurs(message: types.Message, state: FSMContext):
     # Проверка прав
-    if message.from_user.id not in ADMIN_USER_IDS:
+    if not await is_admin(message.from_user.id):
         await message.answer("⛔ У вас нет доступа к этой команде.")
         return
 
@@ -681,7 +714,80 @@ async def admin_set_usdt(message: types.Message, state: FSMContext):
         f"🪙 1 USDT = {usdt} VND",
         parse_mode="HTML"
     )
-        
+
+# ============ АДМИН: УПРАВЛЕНИЕ ДОСТУПОМ ============
+@dp.message(Command("addadmin"))
+async def cmd_addadmin(message: types.Message):
+    if not await is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await message.answer(
+            "Использование: <code>/addadmin 123456789</code>",
+            parse_mode="HTML"
+        )
+        return
+    new_id = int(parts[1])
+    await add_admin(new_id)
+    await message.answer(
+        f"✅ Пользователь <code>{new_id}</code> добавлен в админы.",
+        parse_mode="HTML"
+    )
+
+
+@dp.message(Command("deladmin"))
+async def cmd_deladmin(message: types.Message):
+    if not await is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await message.answer(
+            "Использование: <code>/deladmin 123456789</code>",
+            parse_mode="HTML"
+        )
+        return
+    target_id = int(parts[1])
+
+    if target_id in ADMIN_USER_IDS:
+        await message.answer(
+            "⚠️ Этот пользователь задан в <code>.env</code> как супер-админ. "
+            "Удалить его через команду нельзя — правьте переменные на BotHost.",
+            parse_mode="HTML"
+        )
+        return
+
+    await remove_admin(target_id)
+    await message.answer(
+        f"🗑 Пользователь <code>{target_id}</code> удалён из админов.",
+        parse_mode="HTML"
+    )
+
+
+@dp.message(Command("admins"))
+async def cmd_admins(message: types.Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    rows = await list_admins()
+    env_ids = ADMIN_USER_IDS
+
+    text = "👥 <b>Админы:</b>\n\n"
+
+    if env_ids:
+        text += "<b>Супер-админы (.env):</b>\n"
+        for uid in env_ids:
+            text += f"• <code>{uid}</code>\n"
+        text += "\n"
+
+    if rows:
+        text += "<b>Добавленные через бота:</b>\n"
+        for r in rows:
+            text += f"• <code>{r[0]}</code>\n"
+    else:
+        text += "<i>Через бота пока никто не добавлен.</i>"
+
+    await message.answer(text, parse_mode="HTML")
+   
 # ============ ОШИБКИ И ЗАПУСК ============
 @dp.errors()
 async def errors_handler(event: types.ErrorEvent):
@@ -692,6 +798,10 @@ async def main():
     await init_db()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
 if __name__ == "__main__":
