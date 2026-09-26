@@ -1,8 +1,5 @@
 import asyncio
 import logging
-import aiohttp
-import ssl
-import certifi
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -18,8 +15,10 @@ load_dotenv()
 # ============ КОНФИГ ============
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
+ADMIN_USER_IDS = [
+    int(x) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip()
+]
 DB_PATH = "requests.db"
-MODIFIER = 0.81
 
 logging.basicConfig(level=logging.INFO)
 
@@ -45,6 +44,14 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        
         await db.commit()
 
 
@@ -87,43 +94,43 @@ async def update_request_status(req_id, status):
         await db.execute("UPDATE requests SET status=? WHERE id=?", (status, req_id))
         await db.commit()
 
-
-# ============ КУРСЫ ============
-async def fetch_vnd_rates():
-    url = "https://open.er-api.com/v6/latest/RUB"
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.get(url, timeout=10) as resp:
-            data = await resp.json()
-    if data.get("result") != "success":
-        raise ValueError(f"API error: {data.get('error-type', 'unknown')}")
-    rates = data["rates"]
-    rub_to_vnd = rates["VND"]
-    usd_to_vnd = rates["VND"] / rates["USD"]
-    return {"RUB": rub_to_vnd, "USD": usd_to_vnd, "USDT": usd_to_vnd}
+async def set_setting(key: str, value: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value)
+        )
+        await db.commit()
 
 
-async def build_kurs_text():
-    rates = await fetch_vnd_rates()
-    rub_final = rates["RUB"] * MODIFIER
-    usd_final = rates["USD"] * MODIFIER
-    usdt_final = rates["USDT"] * MODIFIER
+async def get_setting(key: str, default: str = None) -> str:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
+        row = await cur.fetchone()
+        return row[0] if row else default
 
-    rub_reverse = (1 / rates["RUB"]) * MODIFIER * 10000
-    usd_reverse = (1 / rates["USD"]) * MODIFIER * 10000
-    usdt_reverse = (1 / rates["USDT"]) * MODIFIER * 10000
     
+# ============ КУРСЫ ============
+async def build_kurs_text():
+    rub = float(await get_setting("rub_to_vnd", default="0.85"))
+    usd = float(await get_setting("usd_to_vnd", default="25500"))
+    usdt = float(await get_setting("usdt_to_vnd", default="25500"))
+
+    rub_rev = (1 / rub) * 10000
+    usd_rev = (1 / usd) * 10000
+    usdt_rev = (1 / usdt) * 10000
+
     text = (
         "💱 <b>Курс к вьетнамскому донгу (VND)</b>\n\n"
-        f"🇷🇺 1 RUB = <b>{rub_final:,.2f}</b> VND\n"
-        f"🇺🇸 1 USD = <b>{usd_final:,.2f}</b> VND\n"
-        f"🪙 1 USDT ≈ <b>{usdt_final:,.2f}</b> VND\n\n"
-          "🔄 <b>Обратный курс:</b>\n\n"
-    f"10000 VND = <b>{rub_reverse:,.2f}</b> RUB\n"
-    f"10000 VND = <b>{usd_reverse:,.2f}</b> USD\n"
-    f"10000 VND = <b>{usdt_reverse:,.2f}</b> USDT\n\n"
-        f"<i>Курс рассчитан с коэффициентом {MODIFIER}</i>"
+        f"🇷🇺 1 RUB = <b>{rub:,.2f}</b> VND\n"
+        f"🇺🇸 1 USD = <b>{usd:,.2f}</b> VND\n"
+        f"🪙 1 USDT ≈ <b>{usdt:,.2f}</b> VND\n\n"
+        "🔄 <b>Обратный курс:</b>\n\n"
+        f"10000 VND = <b>{rub_rev:,.2f}</b> RUB\n"
+        f"10000 VND = <b>{usd_rev:,.2f}</b> USD\n"
+        f"10000 VND = <b>{usdt_rev:,.2f}</b> USDT\n\n"
+        "<i>Курс устанавливается администратором.</i>"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="start")]
@@ -152,12 +159,6 @@ def start_text(name):
     )
 
 
-def cancel_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="req_cancel")]
-    ])
-
-
 def back_cancel_keyboard(back_cb):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data=back_cb),
@@ -173,7 +174,11 @@ class ReqForm(StatesGroup):
     address = State()
     contact = State()
     confirm = State()
-
+    
+class AdminForm(StatesGroup):
+    set_rub = State()    # ждём ввод курса RUB
+    set_usd = State()    # ждём ввод курса USD
+    set_usdt = State()   # ждём ввод курса USDT
 
 # ============ FSM-ХЕНДЛЕРЫ ЗАЯВКИ ============
 @dp.callback_query(lambda c: c.data == "req")
@@ -508,7 +513,7 @@ async def cmd_kurs(message: types.Message):
         text, keyboard = await build_kurs_text()
     except Exception as e:
         await message.answer("😔 Не удалось получить курс. Попробуйте позже.")
-        logging.error("Ошибка API курса: %s", e)
+        logging.error("Ошибка при получении курса: %s", e)
         return
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
@@ -529,7 +534,7 @@ async def process_kurs(callback: types.CallbackQuery):
         text, keyboard = await build_kurs_text()
     except Exception as e:
         await callback.message.edit_text("😔 Не удалось получить курс.")
-        logging.error("Ошибка API курса: %s", e)
+        logging.error("Ошибка при получении курса: %s", e)
         await callback.answer()
         return
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -537,6 +542,10 @@ async def process_kurs(callback: types.CallbackQuery):
 
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
+    # В группах /cancel игнорируем, чтобы не создавать пустые сообщения
+    if message.chat.type != "private":
+        return
+
     current = await state.get_state()
     if current is None:
         await message.answer("Нечего отменять — вы не в процессе создания заявки.")
@@ -547,6 +556,130 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
         ])
+    )
+
+# ============ АДМИН: УСТАНОВКА КУРСА ============
+@dp.message(Command("setkurs"))
+async def cmd_setkurs(message: types.Message, state: FSMContext):
+    # Проверка прав
+    if message.from_user.id not in ADMIN_USER_IDS:
+        await message.answer("⛔ У вас нет доступа к этой команде.")
+        return
+
+    parts = message.text.split()
+
+    # --- Вариант 1: с аргументами (работает в любом чате) ---
+    if len(parts) == 3:
+        currency = parts[1].lower()
+        if currency not in ("rub", "usd", "usdt"):
+            await message.answer("⚠️ Валюта должна быть <code>rub</code>, <code>usd</code> или <code>usdt</code>.", parse_mode="HTML")
+            return
+        try:
+            rate = float(parts[2].replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+        except ValueError:
+            await message.answer("⚠️ Курс должен быть положительным числом.")
+            return
+
+        key = f"{currency}_to_vnd"
+        await set_setting(key, str(rate))
+        await message.answer(f"✅ Курс <b>1 {currency.upper()} = {rate:,.2f} VND</b> сохранён.", parse_mode="HTML")
+        return
+
+    # --- Вариант 2: без аргументов (только личка, пошаговый диалог) ---
+    if message.chat.type != "private":
+        await message.answer(
+            "ℹ️ Пошаговый ввод работает только в личке со мной.\n\n"
+            "Здесь, в группе, используйте команду с аргументом:\n"
+            "<code>/setkurs rub 305</code>\n"
+            "<code>/setkurs usd 25500</code>\n"
+            "<code>/setkurs usdt 25500</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    rub = await get_setting("rub_to_vnd", default="320")
+    usd = await get_setting("usd_to_vnd", default="25500")
+    usdt = await get_setting("usdt_to_vnd", default="25500")
+
+    await message.answer(
+        f"Текущие курсы:\n"
+        f"🇷🇺 1 RUB = {rub} VND\n"
+        f"🇺🇸 1 USD = {usd} VND\n"
+        f"🪙 1 USDT = {usdt} VND\n\n"
+        f"Введите новый курс <b>1 RUB = ? VND</b>\n"
+        f"(или <code>-</code>, чтобы оставить без изменений):",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminForm.set_rub)
+
+
+@dp.message(AdminForm.set_rub)
+async def admin_set_rub(message: types.Message, state: FSMContext):
+    raw = message.text.strip()
+    if raw != "-":
+        try:
+            rate = float(raw.replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+            await set_setting("rub_to_vnd", str(rate))
+        except ValueError:
+            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
+            return
+
+    await message.answer(
+        "Теперь курс <b>1 USD = ? VND</b> (или <code>-</code>):",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminForm.set_usd)
+
+
+@dp.message(AdminForm.set_usd)
+async def admin_set_usd(message: types.Message, state: FSMContext):
+    raw = message.text.strip()
+    if raw != "-":
+        try:
+            rate = float(raw.replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+            await set_setting("usd_to_vnd", str(rate))
+        except ValueError:
+            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
+            return
+
+    await message.answer(
+        "Теперь курс <b>1 USDT = ? VND</b> (или <code>-</code>):",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminForm.set_usdt)
+
+
+@dp.message(AdminForm.set_usdt)
+async def admin_set_usdt(message: types.Message, state: FSMContext):
+    raw = message.text.strip()
+    if raw != "-":
+        try:
+            rate = float(raw.replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+            await set_setting("usdt_to_vnd", str(rate))
+        except ValueError:
+            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
+            return
+
+    await state.clear()
+
+    rub = await get_setting("rub_to_vnd", default="320")
+    usd = await get_setting("usd_to_vnd", default="25500")
+    usdt = await get_setting("usdt_to_vnd", default="25500")
+
+    await message.answer(
+        f"✅ Курсы сохранены:\n\n"
+        f"🇷🇺 1 RUB = {rub} VND\n"
+        f"🇺🇸 1 USD = {usd} VND\n"
+        f"🪙 1 USDT = {usdt} VND",
+        parse_mode="HTML"
     )
         
 # ============ ОШИБКИ И ЗАПУСК ============
