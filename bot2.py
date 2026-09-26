@@ -41,7 +41,8 @@ async def init_db():
                 contact TEXT,
                 status TEXT DEFAULT 'active',
                 admin_msg_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                result TEXT
             )
         """)
 
@@ -62,13 +63,13 @@ async def init_db():
         await db.commit()
 
 
-async def create_request(user_id, user_name, c_from, c_to, amount, address, contact):
+async def create_request(user_id, user_name, c_from, c_to, amount, address, contact, result):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """INSERT INTO requests 
-               (user_id, user_name, currency_from, currency_to, amount, address, contact)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, user_name, c_from, c_to, amount, address, contact)
+               (user_id, user_name, currency_from, currency_to, amount, address, contact, result)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, user_name, c_from, c_to, amount, address, contact, result)
         )
         await db.commit()
         return cur.lastrowid
@@ -83,7 +84,7 @@ async def set_admin_msg_id(req_id, msg_id):
 async def get_user_active_requests(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "SELECT id, currency_from, currency_to, amount, address FROM requests "
+            "SELECT id, currency_from, currency_to, amount, address, result FROM requests "
             "WHERE user_id=? AND status='active' ORDER BY id DESC",
             (user_id,)
         )
@@ -394,18 +395,23 @@ async def req_confirm(callback: types.CallbackQuery, state: FSMContext):
     user = callback.from_user
     user_name = f"{user.full_name} (@{user.username})" if user.username else user.full_name
 
+    result_str = await calculate_result(
+        data["currency_from"], data["currency_to"], data["amount"]
+    )
+
     req_id = await create_request(
         user.id, user_name,
         data["currency_from"], data["currency_to"],
-        data["amount"], data["address"], data["contact"]
+        data["amount"], data["address"], data["contact"],
+        result_str
     )
-
     admin_text = (
         f"🆕 <b>Заявка #{req_id}</b>\n\n"
         f"👤 {user_name}\n"
         f"🆔 <code>{user.id}</code>\n\n"
         f"💱 {CURRENCY_EMOJI[data['currency_from']]} → {CURRENCY_EMOJI[data['currency_to']]}\n"
-        f"💰 Сумма: <b>{data['amount']:,.2f}</b>\n"
+        f"💰 Отдаёт: <b>{data['amount']:,.2f}</b>\n"
+        f"💵 Получает: <b>{result_str}</b>\n"
         f"📍 Адрес: {data['address']}\n"
         f"📞 Контакт: {data['contact']}\n\n"
         f"Статус: 🟡 Активна"
@@ -460,13 +466,15 @@ async def admin_status(callback: types.CallbackQuery):
     user_name = req[2]
     c_from, c_to = req[3], req[4]
     amount, address, contact = req[5], req[6], req[7]
+    result_str = req[11] or "—"
 
     new_text = (
         f"🆕 <b>Заявка #{req_id}</b>\n\n"
         f"👤 {user_name}\n"
         f"🆔 <code>{user_id}</code>\n\n"
         f"💱 {CURRENCY_EMOJI[c_from]} → {CURRENCY_EMOJI[c_to]}\n"
-        f"💰 Сумма: <b>{amount:,.2f}</b>\n"
+        f"💰 Отдаёт: <b>{amount:,.2f}</b>\n"
+        f"💵 Получает: <b>{result_str}</b>\n"
         f"📍 Адрес: {address}\n"
         f"📞 Контакт: {contact}\n\n"
         f"Статус: {label}"
@@ -507,10 +515,11 @@ async def my_requests(callback: types.CallbackQuery):
     text = "📋 <b>Ваши активные заявки:</b>\n\n"
     buttons = []
     for r in reqs:
-        req_id, c_from, c_to, amount, address = r
+        req_id, c_from, c_to, amount, address, result_str = r
+        result_str = result_str or "—"
         text += (
             f"#{req_id}: {CURRENCY_EMOJI[c_from]} → {CURRENCY_EMOJI[c_to]}\n"
-            f"   💰 {amount:,.2f} | 📍 {address}\n\n"
+            f"   💰 {amount:,.2f} → {result_str} | 📍 {address}\n\n"
         )
         buttons.append([InlineKeyboardButton(
             text=f"❌ Отменить #{req_id}",
@@ -543,12 +552,15 @@ async def user_cancel_request(callback: types.CallbackQuery):
     if admin_msg_id:
         c_from, c_to = req[3], req[4]
         amount, address, contact = req[5], req[6], req[7]
+        result_str = req[11] or "—"
+
         new_text = (
             f"🆕 <b>Заявка #{req_id}</b>\n\n"
             f"👤 {req[2]}\n"
             f"🆔 <code>{req[1]}</code>\n\n"
             f"💱 {CURRENCY_EMOJI[c_from]} → {CURRENCY_EMOJI[c_to]}\n"
-            f"💰 Сумма: <b>{amount:,.2f}</b>\n"
+            f"💰 Отдаёт: <b>{amount:,.2f}</b>\n"
+            f"💵 Получает: <b>{result_str}</b>\n"
             f"📍 Адрес: {address}\n"
             f"📞 Контакт: {contact}\n\n"
             f"Статус: ❌ Отменена пользователем"
