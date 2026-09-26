@@ -170,6 +170,35 @@ async def build_kurs_text():
     ])
     return text, keyboard
 
+async def calculate_result(currency_from: str, currency_to: str, amount: float) -> str:
+    """Считает, сколько клиент получит на руки. Возвращает строку для отображения."""
+    # Курсы: сколько VND за 1 единицу валюты
+    rates_to_vnd = {
+        "RUB": float(await get_setting("rub_to_vnd", default="320")),
+        "USD": float(await get_setting("usd_to_vnd", default="25500")),
+        "USDT": float(await get_setting("usdt_to_vnd", default="25500")),
+        "VND": 1.0,  # 1 VND = 1 VND
+    }
+
+    c_from = currency_from.upper()
+    c_to = currency_to.upper()
+
+    if c_from == c_to:
+        return f"{amount:,.2f} {c_to}"
+
+    # Считаем через VND как промежуточную валюту
+    if c_from == "VND":
+        # VND → другая валюта: делим на курс целевой
+        result = amount / rates_to_vnd[c_to]
+    elif c_to == "VND":
+        # Другая → VND: умножаем на курс исходной
+        result = amount * rates_to_vnd[c_from]
+    else:
+        # Кросс-курс (например, USD → RUB): сначала в VND, потом в целевую
+        amount_in_vnd = amount * rates_to_vnd[c_from]
+        result = amount_in_vnd / rates_to_vnd[c_to]
+
+    return f"{result:,.2f} {c_to}"
 
 # ============ КЛАВИАТУРЫ ============
 CURRENCY_EMOJI = {"RUB": "🇷🇺 Рубли", "USD": "🇺🇸 Доллары", "USDT": "🪙 USDT", "VND": "🇻🇳 Донги"}
@@ -313,10 +342,15 @@ async def req_contact(message: types.Message, state: FSMContext):
     await state.update_data(contact=message.text)
     data = await state.get_data()
 
+    result_str = await calculate_result(
+        data["currency_from"], data["currency_to"], data["amount"]
+    )
+
     text = (
         "📝 <b>Шаг 5 из 5 — проверьте заявку</b>\n\n"
         f"💱 {CURRENCY_EMOJI[data['currency_from']]} → {CURRENCY_EMOJI[data['currency_to']]}\n"
-        f"💰 Сумма: <b>{data['amount']:,.2f}</b>\n"
+        f"💰 Отдаёте: <b>{data['amount']:,.2f}</b>\n"
+        f"💵 Получаете: <b>{result_str}</b>\n"
         f"📍 Адрес: {data['address']}\n"
         f"📞 Контакт: {data['contact']}\n\n"
         "Всё верно?"
@@ -798,10 +832,6 @@ async def main():
     await init_db()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
 
 
 if __name__ == "__main__":
