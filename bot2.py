@@ -46,21 +46,18 @@ async def init_db():
                 result TEXT
             )
         """)
-
         await db.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
         """)
-        
         await db.execute("""
             CREATE TABLE IF NOT EXISTS admins (
                 user_id INTEGER PRIMARY KEY,
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
         await db.commit()
 
 
@@ -176,7 +173,6 @@ async def build_kurs_text():
 
 
 async def calculate_result(currency_from: str, currency_to: str, amount: float) -> str:
-    """Считает, сколько клиент получит на руки. Возвращает строку для отображения."""
     rates_to_vnd = {
         "RUB": float(await get_setting("rub_to_vnd", default="320")),
         "USD": float(await get_setting("usd_to_vnd", default="25500")),
@@ -790,4 +786,15 @@ async def cmd_setkurs(message: types.Message, state: FSMContext):
             return
 
         key = f"{currency}_to_vnd"
-        await set_setting
+        await set_setting(key, str(rate))
+        await message.answer(f"✅ Курс <b>1 {currency.upper()} = {rate:,.2f} VND</b> сохранён.", parse_mode="HTML")
+        return
+
+    if message.chat.type != "private":
+        await message.answer(
+            "ℹ️ Пошаговый ввод работает только в личке со мной.\n\n"
+            "Здесь, в группе, используйте команду с аргументом:\n"
+            "<code>/setkurs rub 305</code>\n"
+            "<code>/setkurs usd 25500</code>\n"
+            "<code>/setkurs usdt 25500</code>",
+            parse_mode="HTML
