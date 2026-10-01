@@ -763,4 +763,211 @@ async def cmd_setkurs(message: types.Message, state: FSMContext):
     if len(parts) == 3:
         currency = parts[1].lower()
         if currency not in ("rub", "usd", "usdt"):
-            await message.answer("⚠️ Валюта должна быть <code>rub</code>, <code
+            await message.answer("⚠️ Валюта должна быть <code>rub</code>, <code>usd</code> или <code>usdt</code>.", parse_mode="HTML")
+            return
+        try:
+            rate = float(parts[2].replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+        except ValueError:
+            await message.answer("⚠️ Курс должен быть положительным числом.")
+            return
+
+        key = f"{currency}_to_vnd"
+        await set_setting(key, str(rate))
+        await message.answer(f"✅ Курс <b>1 {currency.upper()} = {rate:,.2f} VND</b> сохранён.", parse_mode="HTML")
+        return
+
+    if message.chat.type != "private":
+        await message.answer(
+            "ℹ️ Пошаговый ввод работает только в личке со мной.\n\n"
+            "Здесь, в группе, используйте команду с аргументом:\n"
+            "<code>/setkurs rub 305</code>\n"
+            "<code>/setkurs usd 25500</code>\n"
+            "<code>/setkurs usdt 25500</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    rub = await get_setting("rub_to_vnd", default="320")
+    usd = await get_setting("usd_to_vnd", default="25500")
+    usdt = await get_setting("usdt_to_vnd", default="25500")
+
+    await message.answer(
+        f"Текущие курсы:\n"
+        f"🇷🇺 1 RUB = {rub} VND\n"
+        f"🇺🇸 1 USD = {usd} VND\n"
+        f"🪙 1 USDT = {usdt} VND\n\n"
+        f"Введите новый курс <b>1 RUB = ? VND</b>\n"
+        f"(или <code>-</code>, чтобы оставить без изменений):",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminForm.set_rub)
+
+
+@dp.message(AdminForm.set_rub)
+async def admin_set_rub(message: types.Message, state: FSMContext):
+    raw = message.text.strip()
+    if raw != "-":
+        try:
+            rate = float(raw.replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+            await set_setting("rub_to_vnd", str(rate))
+        except ValueError:
+            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
+            return
+
+    await message.answer(
+        "Теперь курс <b>1 USD = ? VND</b> (или <code>-</code>):",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminForm.set_usd)
+
+
+@dp.message(AdminForm.set_usd)
+async def admin_set_usd(message: types.Message, state: FSMContext):
+    raw = message.text.strip()
+    if raw != "-":
+        try:
+            rate = float(raw.replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+            await set_setting("usd_to_vnd", str(rate))
+        except ValueError:
+            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
+            return
+
+    await message.answer(
+        "Теперь курс <b>1 USDT = ? VND</b> (или <code>-</code>):",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminForm.set_usdt)
+
+
+@dp.message(AdminForm.set_usdt)
+async def admin_set_usdt(message: types.Message, state: FSMContext):
+    raw = message.text.strip()
+    if raw != "-":
+        try:
+            rate = float(raw.replace(",", "."))
+            if rate <= 0:
+                raise ValueError
+            await set_setting("usdt_to_vnd", str(rate))
+        except ValueError:
+            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
+            return
+
+    await state.clear()
+
+    rub = await get_setting("rub_to_vnd", default="320")
+    usd = await get_setting("usd_to_vnd", default="25500")
+    usdt = await get_setting("usdt_to_vnd", default="25500")
+
+    await message.answer(
+        f"✅ Курсы сохранены:\n\n"
+        f"🇷🇺 1 RUB = {rub} VND\n"
+        f"🇺🇸 1 USD = {usd} VND\n"
+        f"🪙 1 USDT = {usdt} VND",
+        parse_mode="HTML"
+    )
+
+
+@dp.message(Command("addadmin"))
+async def cmd_addadmin(message: types.Message):
+    if not await is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await message.answer(
+            "Использование: <code>/addadmin 123456789</code>",
+            parse_mode="HTML"
+        )
+        return
+    new_id = int(parts[1])
+    await add_admin(new_id)
+    await message.answer(
+        f"✅ Пользователь <code>{new_id}</code> добавлен в админы.",
+        parse_mode="HTML"
+    )
+
+
+@dp.message(Command("deladmin"))
+async def cmd_deladmin(message: types.Message):
+    if not await is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await message.answer(
+            "Использование: <code>/deladmin 123456789</code>",
+            parse_mode="HTML"
+        )
+        return
+    target_id = int(parts[1])
+
+    if target_id in ADMIN_USER_IDS:
+        await message.answer(
+            "⚠️ Этот пользователь задан в <code>.env</code> как супер-админ. "
+            "Удалить его через команду нельзя — правьте переменные на BotHost.",
+            parse_mode="HTML"
+        )
+        return
+
+    await remove_admin(target_id)
+    await message.answer(
+        f"🗑 Пользователь <code>{target_id}</code> удалён из админов.",
+        parse_mode="HTML"
+    )
+
+
+@dp.message(Command("admins"))
+async def cmd_admins(message: types.Message):
+    if not await is_admin(message.from_user.id):
+        return
+
+    rows = await list_admins()
+    env_ids = ADMIN_USER_IDS
+
+    text = "👥 <b>Админы:</b>\n\n"
+
+    if env_ids:
+        text += "<b>Супер-админы (.env):</b>\n"
+        for uid in env_ids:
+            text += f"• <code>{uid}</code>\n"
+        text += "\n"
+
+    if rows:
+        text += "<b>Добавленные через бота:</b>\n"
+        for r in rows:
+            text += f"• <code>{r[0]}</code>\n"
+    else:
+        text += "<i>Через бота пока никто не добавлен.</i>"
+
+    await message.answer(text, parse_mode="HTML")
+
+
+@dp.errors()
+async def errors_handler(event: types.ErrorEvent):
+    logging.exception("Ошибка в хендлере: %s", event.exception)
+    try:
+        await bot.send_message(
+            ADMIN_CHAT_ID,
+            f"⚠️ <b>Ошибка в хендлере:</b>\n\n<code>{event.exception}</code>",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
+
+async def main():
+    await init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
+    try:
+        await bot.send_message(ADMIN_CHAT_ID, "🟢 Бот запущен")
+    except Exception as e:
+        logging.error("Не могу писать в админ-чат: %s", e)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
