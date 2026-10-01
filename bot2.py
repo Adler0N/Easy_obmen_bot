@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ============ КОНФИГ ============
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 ADMIN_USER_IDS = [
@@ -27,7 +26,6 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 
-# ============ БАЗА ДАННЫХ ============
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -118,7 +116,6 @@ async def get_setting(key: str, default: str = None) -> str:
         return row[0] if row else default
 
 
-# ============ АДМИНЫ ============
 async def is_admin(user_id: int) -> bool:
     if user_id in ADMIN_USER_IDS:
         return True
@@ -145,7 +142,6 @@ async def list_admins():
         return await cur.fetchall()
 
 
-# ============ КУРСЫ ============
 async def build_kurs_text():
     rub = float(await get_setting("rub_to_vnd", default="320"))
     usd = float(await get_setting("usd_to_vnd", default="25500"))
@@ -197,7 +193,6 @@ async def calculate_result(currency_from: str, currency_to: str, amount: float) 
     return f"{result:,.2f} {c_to}"
 
 
-# ============ КЛАВИАТУРЫ ============
 CURRENCY_EMOJI = {"RUB": "🇷🇺 Рубли", "USD": "🇺🇸 Доллары", "USDT": "🪙 USDT", "VND": "🇻🇳 Донги"}
 
 
@@ -226,7 +221,6 @@ def back_cancel_keyboard(back_cb):
     ])
 
 
-# ============ FSM ============
 class ReqForm(StatesGroup):
     currency_from = State()
     currency_to = State()
@@ -246,7 +240,6 @@ class SupportForm(StatesGroup):
     waiting_message = State()
 
 
-# ============ FSM-ХЕНДЛЕРЫ ЗАЯВКИ ============
 @dp.callback_query(lambda c: c.data == "req")
 async def req_start(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -457,7 +450,6 @@ async def req_confirm(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ============ ПОДДЕРЖКА ============
 async def show_support_prompt(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
@@ -565,7 +557,6 @@ async def admin_reply_to_user(message: types.Message):
         await message.reply("❌ Не удалось отправить. Возможно, пользователь заблокировал бота.")
 
 
-# ============ АДМИН: СТАТУСЫ ЗАЯВОК ============
 @dp.callback_query(F.data.startswith("adm_"))
 async def admin_status(callback: types.CallbackQuery):
     parts = callback.data.split("_")
@@ -624,7 +615,6 @@ async def admin_status(callback: types.CallbackQuery):
     await callback.answer("Статус обновлён")
 
 
-# ============ МОИ ЗАЯВКИ ============
 @dp.callback_query(lambda c: c.data == "my_reqs")
 async def my_requests(callback: types.CallbackQuery):
     reqs = await get_user_active_requests(callback.from_user.id)
@@ -702,7 +692,6 @@ async def user_cancel_request(callback: types.CallbackQuery):
     await my_requests(callback)
 
 
-# ============ СТАРТ И КУРС ============
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -763,7 +752,6 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     )
 
 
-# ============ АДМИН: УСТАНОВКА КУРСА ============
 @dp.message(Command("setkurs"))
 async def cmd_setkurs(message: types.Message, state: FSMContext):
     if not await is_admin(message.from_user.id):
@@ -775,26 +763,4 @@ async def cmd_setkurs(message: types.Message, state: FSMContext):
     if len(parts) == 3:
         currency = parts[1].lower()
         if currency not in ("rub", "usd", "usdt"):
-            await message.answer("⚠️ Валюта должна быть <code>rub</code>, <code>usd</code> или <code>usdt</code>.", parse_mode="HTML")
-            return
-        try:
-            rate = float(parts[2].replace(",", "."))
-            if rate <= 0:
-                raise ValueError
-        except ValueError:
-            await message.answer("⚠️ Курс должен быть положительным числом.")
-            return
-
-        key = f"{currency}_to_vnd"
-        await set_setting(key, str(rate))
-        await message.answer(f"✅ Курс <b>1 {currency.upper()} = {rate:,.2f} VND</b> сохранён.", parse_mode="HTML")
-        return
-
-    if message.chat.type != "private":
-        await message.answer(
-            "ℹ️ Пошаговый ввод работает только в личке со мной.\n\n"
-            "Здесь, в группе, используйте команду с аргументом:\n"
-            "<code>/setkurs rub 305</code>\n"
-            "<code>/setkurs usd 25500</code>\n"
-            "<code>/setkurs usdt 25500</code>",
-            parse_mode="HTML
+            await message.answer("⚠️ Валюта должна быть <code>rub</code>, <code
