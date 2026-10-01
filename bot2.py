@@ -509,12 +509,8 @@ async def support_cancel(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.message(SupportForm.waiting_message)
+@dp.message(SupportForm.waiting_message, ~F.text.startswith("/"))
 async def support_message(message: types.Message, state: FSMContext):
-    # Если пользователь ввёл команду — не съедаем её, даём обработать другим хендлерам
-    if message.text and message.text.startswith("/"):
-        return
-
     await state.clear()
 
     user = message.from_user
