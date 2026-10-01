@@ -507,13 +507,15 @@ async def support_message(message: types.Message, state: FSMContext):
 
 @dp.message(F.chat.id == ADMIN_CHAT_ID, F.reply_to_message)
 async def admin_reply_to_user(message: types.Message):
-    # Ищем user_id в тексте сообщения, на которое ответили
     reply_text = message.reply_to_message.text or message.reply_to_message.caption or ""
-    # Ищем ID в <code>...</code>
+    # Проверяем, что это именно сообщение в поддержку
+    if "#support" not in reply_text:
+        return
+    
     import re
     match = re.search(r"🆔 (\d+)", reply_text)
     if not match:
-        return  # это не сообщение поддержки, игнорируем
+        return
     
     user_id = int(match.group(1))
     try:
