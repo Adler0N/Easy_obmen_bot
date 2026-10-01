@@ -498,45 +498,12 @@ async def support_message(message: types.Message, state: FSMContext):
     user_name = f"{user.full_name} (@{user.username})" if user.username else user.full_name
     
     admin_text = (
-        f"✉️ <b>Сообщение в поддержку</b>\n\n"
+        f"✉️ <b>Сообщение в поддержку</b> #support\n\n"
         f"👤 {user_name}\n"
         f"🆔 <code>{user.id}</code>\n\n"
         f"💬 {message.text}"
     )
-    try:
-        await bot.send_message(
-            ADMIN_CHAT_ID, admin_text,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="↩️ Ответить пользователю",
-                    callback_data=f"support_reply_{user.id}"
-                )]
-            ])
-        )
-    except Exception as e:
-        logging.error("Не удалось отправить сообщение поддержки: %s", e)
-        await message.answer("😔 Не удалось отправить. Попробуйте позже.")
-        return
-    
-    await message.answer(
-        "✅ Сообщение отправлено! Мы ответим в ближайшее время.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
-        ])
-    )
-
-
-@dp.callback_query(lambda c: c.data == "support_cancel")
-async def support_cancel(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text(
-        "❌ Отправка сообщения отменена.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
-        ])
-    )
-    await callback.answer()
+    ...
 
 @dp.message(F.chat.id == ADMIN_CHAT_ID, F.reply_to_message)
 async def admin_reply_to_user(message: types.Message):
