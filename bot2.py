@@ -147,9 +147,10 @@ async def build_kurs_text():
     usd = float(await get_setting("usd_to_vnd", default="25500"))
     usdt = float(await get_setting("usdt_to_vnd", default="25500"))
 
-    rub_rev = (1 / rub) * 10000
-    usd_rev = (1 / usd) * 10000
-    usdt_rev = (1 / usdt) * 10000
+    # Обратный курс: сколько RUB/USD/USDT за 1 VND
+    rub_rev = 1 / rub
+    usd_rev = 1 / usd
+    usdt_rev = 1 / usdt
 
     text = (
         "💱 <b>Курс к вьетнамскому донгу (VND)</b>\n\n"
@@ -157,9 +158,11 @@ async def build_kurs_text():
         f"🇺🇸 1 USD = <b>{usd:,.2f}</b> VND\n"
         f"🪙 1 USDT ≈ <b>{usdt:,.2f}</b> VND\n\n"
         "🔄 <b>Обратный курс:</b>\n\n"
-        f"10000 VND = <b>{rub_rev:,.2f}</b> RUB\n"
-        f"10000 VND = <b>{usd_rev:,.2f}</b> USD\n"
-        f"10000 VND = <b>{usdt_rev:,.2f}</b> USDT\n\n"
+        f"1 VND = <b>{rub_rev:,.6f}</b> RUB\n"
+        f"1 VND = <b>{usd_rev:,.6f}</b> USD\n"
+        f"1 VND = <b>{usdt_rev:,.6f}</b> USDT\n\n"
+        "💡 <i>От 100 000 ₽ — персональный курс. "
+        "Уточните в поддержке.</i>\n\n"
         "<i>Курс устанавливается администратором.</i>"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
