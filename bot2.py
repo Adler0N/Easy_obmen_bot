@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -102,6 +103,7 @@ async def update_request_status(req_id, status):
         await db.execute("UPDATE requests SET status=? WHERE id=?", (status, req_id))
         await db.commit()
 
+
 async def set_setting(key: str, value: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -118,9 +120,9 @@ async def get_setting(key: str, default: str = None) -> str:
         row = await cur.fetchone()
         return row[0] if row else default
 
+
 # ============ АДМИНЫ ============
 async def is_admin(user_id: int) -> bool:
-    """Проверяет, есть ли пользователь в списке админов (БД или .env)."""
     if user_id in ADMIN_USER_IDS:
         return True
     async with aiosqlite.connect(DB_PATH) as db:
@@ -144,10 +146,11 @@ async def list_admins():
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT user_id FROM admins ORDER BY added_at")
         return await cur.fetchall()
-    
+
+
 # ============ КУРСЫ ============
 async def build_kurs_text():
-    rub = float(await get_setting("rub_to_vnd", default="0.85"))
+    rub = float(await get_setting("rub_to_vnd", default="320"))
     usd = float(await get_setting("usd_to_vnd", default="25500"))
     usdt = float(await get_setting("usdt_to_vnd", default="25500"))
 
@@ -171,14 +174,14 @@ async def build_kurs_text():
     ])
     return text, keyboard
 
+
 async def calculate_result(currency_from: str, currency_to: str, amount: float) -> str:
     """Считает, сколько клиент получит на руки. Возвращает строку для отображения."""
-    # Курсы: сколько VND за 1 единицу валюты
     rates_to_vnd = {
         "RUB": float(await get_setting("rub_to_vnd", default="320")),
         "USD": float(await get_setting("usd_to_vnd", default="25500")),
         "USDT": float(await get_setting("usdt_to_vnd", default="25500")),
-        "VND": 1.0,  # 1 VND = 1 VND
+        "VND": 1.0,
     }
 
     c_from = currency_from.upper()
@@ -187,19 +190,16 @@ async def calculate_result(currency_from: str, currency_to: str, amount: float) 
     if c_from == c_to:
         return f"{amount:,.2f} {c_to}"
 
-    # Считаем через VND как промежуточную валюту
     if c_from == "VND":
-        # VND → другая валюта: делим на курс целевой
         result = amount / rates_to_vnd[c_to]
     elif c_to == "VND":
-        # Другая → VND: умножаем на курс исходной
         result = amount * rates_to_vnd[c_from]
     else:
-        # Кросс-курс (например, USD → RUB): сначала в VND, потом в целевую
         amount_in_vnd = amount * rates_to_vnd[c_from]
         result = amount_in_vnd / rates_to_vnd[c_to]
 
     return f"{result:,.2f} {c_to}"
+
 
 # ============ КЛАВИАТУРЫ ============
 CURRENCY_EMOJI = {"RUB": "🇷🇺 Рубли", "USD": "🇺🇸 Доллары", "USDT": "🪙 USDT", "VND": "🇻🇳 Донги"}
@@ -238,14 +238,17 @@ class ReqForm(StatesGroup):
     address = State()
     contact = State()
     confirm = State()
-    
+
+
 class AdminForm(StatesGroup):
-    set_rub = State()    # ждём ввод курса RUB
-    set_usd = State()    # ждём ввод курса USD
-    set_usdt = State()   # ждём ввод курса USDT
+    set_rub = State()
+    set_usd = State()
+    set_usdt = State()
+
 
 class SupportForm(StatesGroup):
     waiting_message = State()
+
 
 # ============ FSM-ХЕНДЛЕРЫ ЗАЯВКИ ============
 @dp.callback_query(lambda c: c.data == "req")
@@ -264,6 +267,23 @@ async def req_start(callback: types.CallbackQuery, state: FSMContext):
     )
     await state.set_state(ReqForm.currency_from)
     await callback.answer()
+
+
+@dp.message(Command("req"))
+async def cmd_req(message: types.Message, state: FSMContext):
+    await state.clear()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇷🇺 Рубли", callback_data="cf_RUB")],
+        [InlineKeyboardButton(text="🇺🇸 Доллары", callback_data="cf_USD")],
+        [InlineKeyboardButton(text="🪙 USDT", callback_data="cf_USDT")],
+        [InlineKeyboardButton(text="🇻🇳 Донги", callback_data="cf_VND")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="req_cancel")],
+    ])
+    await message.answer(
+        "📝 <b>Шаг 1 из 5</b>\n\nКакую валюту будете менять?",
+        reply_markup=keyboard, parse_mode="HTML"
+    )
+    await state.set_state(ReqForm.currency_from)
 
 
 @dp.callback_query(ReqForm.currency_from, F.data.startswith("cf_"))
@@ -369,7 +389,6 @@ async def req_contact(message: types.Message, state: FSMContext):
     await state.set_state(ReqForm.confirm)
 
 
-
 @dp.callback_query(lambda c: c.data == "req_back_contact")
 async def req_back_contact(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -441,6 +460,8 @@ async def req_confirm(callback: types.CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+
+# ============ ПОДДЕРЖКА ============
 async def show_support_prompt(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
@@ -462,6 +483,7 @@ async def cmd_msg(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda c: c.data == "support")
 async def callback_support(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     await callback.message.edit_text(
         "✉️ <b>Связь с поддержкой</b>\n\n"
         "Напишите ваше сообщение — мы передадим его администратору.\n\n"
@@ -474,49 +496,70 @@ async def callback_support(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(SupportForm.waiting_message)
     await callback.answer()
 
-@dp.message(Command("req"))
-async def cmd_req(message: types.Message, state: FSMContext):
+
+@dp.callback_query(lambda c: c.data == "support_cancel")
+async def support_cancel(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇷🇺 Рубли", callback_data="cf_RUB")],
-        [InlineKeyboardButton(text="🇺🇸 Доллары", callback_data="cf_USD")],
-        [InlineKeyboardButton(text="🪙 USDT", callback_data="cf_USDT")],
-        [InlineKeyboardButton(text="🇻🇳 Донги", callback_data="cf_VND")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="req_cancel")],
-    ])
-    await message.answer(
-        "📝 <b>Шаг 1 из 5</b>\n\nКакую валюту будете менять?",
-        reply_markup=keyboard, parse_mode="HTML"
+    await callback.message.edit_text(
+        "❌ Отправка сообщения отменена.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
+        ])
     )
-    await state.set_state(ReqForm.currency_from)
+    await callback.answer()
+
 
 @dp.message(SupportForm.waiting_message)
 async def support_message(message: types.Message, state: FSMContext):
+    # Если пользователь ввёл команду — не съедаем её, даём обработать другим хендлерам
+    if message.text and message.text.startswith("/"):
+        return
+
     await state.clear()
-    
+
     user = message.from_user
     user_name = f"{user.full_name} (@{user.username})" if user.username else user.full_name
-    
+
     admin_text = (
         f"✉️ <b>Сообщение в поддержку</b> #support\n\n"
         f"👤 {user_name}\n"
         f"🆔 <code>{user.id}</code>\n\n"
         f"💬 {message.text}"
     )
-    ...
+    try:
+        await bot.send_message(
+            ADMIN_CHAT_ID, admin_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="↩️ Ответить пользователю",
+                    callback_data=f"support_reply_{user.id}"
+                )]
+            ])
+        )
+    except Exception as e:
+        logging.error("Не удалось отправить сообщение поддержки: %s", e)
+        await message.answer("😔 Не удалось отправить. Попробуйте позже.")
+        return
+
+    await message.answer(
+        "✅ Сообщение отправлено! Мы ответим в ближайшее время.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
+        ])
+    )
+
 
 @dp.message(F.chat.id == ADMIN_CHAT_ID, F.reply_to_message)
 async def admin_reply_to_user(message: types.Message):
     reply_text = message.reply_to_message.text or message.reply_to_message.caption or ""
-    # Проверяем, что это именно сообщение в поддержку
     if "#support" not in reply_text:
         return
-    
-    import re
+
     match = re.search(r"🆔 (\d+)", reply_text)
     if not match:
         return
-    
+
     user_id = int(match.group(1))
     try:
         await bot.send_message(
@@ -554,7 +597,6 @@ async def admin_status(callback: types.CallbackQuery):
 
     await update_request_status(req_id, new_status)
 
-    # Редактируем сообщение в админ-чате
     user_id = req[1]
     user_name = req[2]
     c_from, c_to = req[3], req[4]
@@ -577,7 +619,6 @@ async def admin_status(callback: types.CallbackQuery):
     except Exception as e:
         logging.error("Не удалось отредактировать сообщение: %s", e)
 
-    # Уведомляем пользователя
     user_text = (
         f"{label}\n\n"
         f"Ваша заявка #{req_id} "
@@ -640,7 +681,6 @@ async def user_cancel_request(callback: types.CallbackQuery):
 
     await update_request_status(req_id, "cancelled")
 
-    # Обновляем сообщение в админ-чате
     admin_msg_id = req[9]
     if admin_msg_id:
         c_from, c_to = req[3], req[4]
@@ -712,9 +752,9 @@ async def process_kurs(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
+
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
-    # В группах /cancel игнорируем, чтобы не создавать пустые сообщения
     if message.chat.type != "private":
         return
 
@@ -730,17 +770,16 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
         ])
     )
 
+
 # ============ АДМИН: УСТАНОВКА КУРСА ============
 @dp.message(Command("setkurs"))
 async def cmd_setkurs(message: types.Message, state: FSMContext):
-    # Проверка прав
     if not await is_admin(message.from_user.id):
         await message.answer("⛔ У вас нет доступа к этой команде.")
         return
 
     parts = message.text.split()
 
-    # --- Вариант 1: с аргументами (работает в любом чате) ---
     if len(parts) == 3:
         currency = parts[1].lower()
         if currency not in ("rub", "usd", "usdt"):
@@ -755,189 +794,4 @@ async def cmd_setkurs(message: types.Message, state: FSMContext):
             return
 
         key = f"{currency}_to_vnd"
-        await set_setting(key, str(rate))
-        await message.answer(f"✅ Курс <b>1 {currency.upper()} = {rate:,.2f} VND</b> сохранён.", parse_mode="HTML")
-        return
-
-    # --- Вариант 2: без аргументов (только личка, пошаговый диалог) ---
-    if message.chat.type != "private":
-        await message.answer(
-            "ℹ️ Пошаговый ввод работает только в личке со мной.\n\n"
-            "Здесь, в группе, используйте команду с аргументом:\n"
-            "<code>/setkurs rub 305</code>\n"
-            "<code>/setkurs usd 25500</code>\n"
-            "<code>/setkurs usdt 25500</code>",
-            parse_mode="HTML"
-        )
-        return
-
-    rub = await get_setting("rub_to_vnd", default="320")
-    usd = await get_setting("usd_to_vnd", default="25500")
-    usdt = await get_setting("usdt_to_vnd", default="25500")
-
-    await message.answer(
-        f"Текущие курсы:\n"
-        f"🇷🇺 1 RUB = {rub} VND\n"
-        f"🇺🇸 1 USD = {usd} VND\n"
-        f"🪙 1 USDT = {usdt} VND\n\n"
-        f"Введите новый курс <b>1 RUB = ? VND</b>\n"
-        f"(или <code>-</code>, чтобы оставить без изменений):",
-        parse_mode="HTML"
-    )
-    await state.set_state(AdminForm.set_rub)
-
-
-@dp.message(AdminForm.set_rub)
-async def admin_set_rub(message: types.Message, state: FSMContext):
-    raw = message.text.strip()
-    if raw != "-":
-        try:
-            rate = float(raw.replace(",", "."))
-            if rate <= 0:
-                raise ValueError
-            await set_setting("rub_to_vnd", str(rate))
-        except ValueError:
-            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
-            return
-
-    await message.answer(
-        "Теперь курс <b>1 USD = ? VND</b> (или <code>-</code>):",
-        parse_mode="HTML"
-    )
-    await state.set_state(AdminForm.set_usd)
-
-
-@dp.message(AdminForm.set_usd)
-async def admin_set_usd(message: types.Message, state: FSMContext):
-    raw = message.text.strip()
-    if raw != "-":
-        try:
-            rate = float(raw.replace(",", "."))
-            if rate <= 0:
-                raise ValueError
-            await set_setting("usd_to_vnd", str(rate))
-        except ValueError:
-            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
-            return
-
-    await message.answer(
-        "Теперь курс <b>1 USDT = ? VND</b> (или <code>-</code>):",
-        parse_mode="HTML"
-    )
-    await state.set_state(AdminForm.set_usdt)
-
-
-@dp.message(AdminForm.set_usdt)
-async def admin_set_usdt(message: types.Message, state: FSMContext):
-    raw = message.text.strip()
-    if raw != "-":
-        try:
-            rate = float(raw.replace(",", "."))
-            if rate <= 0:
-                raise ValueError
-            await set_setting("usdt_to_vnd", str(rate))
-        except ValueError:
-            await message.answer("⚠️ Введите положительное число или <code>-</code>.", parse_mode="HTML")
-            return
-
-    await state.clear()
-
-    rub = await get_setting("rub_to_vnd", default="320")
-    usd = await get_setting("usd_to_vnd", default="25500")
-    usdt = await get_setting("usdt_to_vnd", default="25500")
-
-    await message.answer(
-        f"✅ Курсы сохранены:\n\n"
-        f"🇷🇺 1 RUB = {rub} VND\n"
-        f"🇺🇸 1 USD = {usd} VND\n"
-        f"🪙 1 USDT = {usdt} VND",
-        parse_mode="HTML"
-    )
-
-# ============ АДМИН: УПРАВЛЕНИЕ ДОСТУПОМ ============
-@dp.message(Command("addadmin"))
-async def cmd_addadmin(message: types.Message):
-    if not await is_admin(message.from_user.id):
-        return
-    parts = message.text.split()
-    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
-        await message.answer(
-            "Использование: <code>/addadmin 123456789</code>",
-            parse_mode="HTML"
-        )
-        return
-    new_id = int(parts[1])
-    await add_admin(new_id)
-    await message.answer(
-        f"✅ Пользователь <code>{new_id}</code> добавлен в админы.",
-        parse_mode="HTML"
-    )
-
-
-@dp.message(Command("deladmin"))
-async def cmd_deladmin(message: types.Message):
-    if not await is_admin(message.from_user.id):
-        return
-    parts = message.text.split()
-    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
-        await message.answer(
-            "Использование: <code>/deladmin 123456789</code>",
-            parse_mode="HTML"
-        )
-        return
-    target_id = int(parts[1])
-
-    if target_id in ADMIN_USER_IDS:
-        await message.answer(
-            "⚠️ Этот пользователь задан в <code>.env</code> как супер-админ. "
-            "Удалить его через команду нельзя — правьте переменные на BotHost.",
-            parse_mode="HTML"
-        )
-        return
-
-    await remove_admin(target_id)
-    await message.answer(
-        f"🗑 Пользователь <code>{target_id}</code> удалён из админов.",
-        parse_mode="HTML"
-    )
-
-
-@dp.message(Command("admins"))
-async def cmd_admins(message: types.Message):
-    if not await is_admin(message.from_user.id):
-        return
-
-    rows = await list_admins()
-    env_ids = ADMIN_USER_IDS
-
-    text = "👥 <b>Админы:</b>\n\n"
-
-    if env_ids:
-        text += "<b>Супер-админы (.env):</b>\n"
-        for uid in env_ids:
-            text += f"• <code>{uid}</code>\n"
-        text += "\n"
-
-    if rows:
-        text += "<b>Добавленные через бота:</b>\n"
-        for r in rows:
-            text += f"• <code>{r[0]}</code>\n"
-    else:
-        text += "<i>Через бота пока никто не добавлен.</i>"
-
-    await message.answer(text, parse_mode="HTML")
-   
-# ============ ОШИБКИ И ЗАПУСК ============
-@dp.errors()
-async def errors_handler(event: types.ErrorEvent):
-    logging.exception("Ошибка в хендлере: %s", event.exception)
-
-
-async def main():
-    await init_db()
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        await set_setting
