@@ -783,19 +783,18 @@ async def process_kurs(callback: types.CallbackQuery):
 
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
-    if message.chat.type != "private":
-        return
-
     current = await state.get_state()
     if current is None:
-        await message.answer("Нечего отменять — вы не в процессе создания заявки.")
+        # В группе не спамим "нечего отменять"
+        if message.chat.type == "private":
+            await message.answer("Нечего отменять — вы не в процессе создания заявки.")
         return
     await state.clear()
     await message.answer(
         "❌ Действие отменено.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
-        ])
+        ]) if message.chat.type == "private" else None
     )
 
 
