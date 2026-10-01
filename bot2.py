@@ -210,6 +210,7 @@ def start_keyboard():
         [InlineKeyboardButton(text="💱 Курсы валют", callback_data="kurs")],
         [InlineKeyboardButton(text="📝 Оставить заявку", callback_data="req")],
         [InlineKeyboardButton(text="📋 Мои заявки", callback_data="my_reqs")],
+        [InlineKeyboardButton(text="✉️ Связаться с поддержкой", callback_data="support")],
     ])
 
 
