@@ -239,6 +239,8 @@ class AdminForm(StatesGroup):
 class SupportForm(StatesGroup):
     waiting_message = State()
 
+class AdminReplyForm(StatesGroup):
+    waiting_text = State()
 
 @dp.callback_query(lambda c: c.data == "req")
 async def req_start(callback: types.CallbackQuery, state: FSMContext):
