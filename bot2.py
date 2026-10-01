@@ -454,6 +454,21 @@ async def cmd_msg(message: types.Message, state: FSMContext):
     )
     await state.set_state(SupportForm.waiting_message)
 
+@dp.message(Command("req"))
+async def cmd_req(message: types.Message, state: FSMContext):
+    await state.clear()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇷🇺 Рубли", callback_data="cf_RUB")],
+        [InlineKeyboardButton(text="🇺🇸 Доллары", callback_data="cf_USD")],
+        [InlineKeyboardButton(text="🪙 USDT", callback_data="cf_USDT")],
+        [InlineKeyboardButton(text="🇻🇳 Донги", callback_data="cf_VND")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="req_cancel")],
+    ])
+    await message.answer(
+        "📝 <b>Шаг 1 из 5</b>\n\nКакую валюту будете менять?",
+        reply_markup=keyboard, parse_mode="HTML"
+    )
+    await state.set_state(ReqForm.currency_from)
 
 @dp.message(SupportForm.waiting_message)
 async def support_message(message: types.Message, state: FSMContext):
