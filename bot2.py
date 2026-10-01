@@ -243,6 +243,9 @@ class AdminForm(StatesGroup):
     set_usd = State()    # ждём ввод курса USD
     set_usdt = State()   # ждём ввод курса USDT
 
+class SupportForm(StatesGroup):
+    waiting_message = State()
+
 # ============ FSM-ХЕНДЛЕРЫ ЗАЯВКИ ============
 @dp.callback_query(lambda c: c.data == "req")
 async def req_start(callback: types.CallbackQuery, state: FSMContext):
@@ -365,6 +368,7 @@ async def req_contact(message: types.Message, state: FSMContext):
     await state.set_state(ReqForm.confirm)
 
 
+
 @dp.callback_query(lambda c: c.data == "req_back_contact")
 async def req_back_contact(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -435,6 +439,91 @@ async def req_confirm(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
     await callback.answer()
+
+@dp.message(Command("msg"))
+async def cmd_msg(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "✉️ <b>Связь с поддержкой</b>\n\n"
+        "Напишите ваше сообщение — мы передадим его администратору.\n\n"
+        "Для отмены напишите /cancel.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="support_cancel")]
+        ]),
+        parse_mode="HTML"
+    )
+    await state.set_state(SupportForm.waiting_message)
+
+
+@dp.message(SupportForm.waiting_message)
+async def support_message(message: types.Message, state: FSMContext):
+    await state.clear()
+    
+    user = message.from_user
+    user_name = f"{user.full_name} (@{user.username})" if user.username else user.full_name
+    
+    admin_text = (
+        f"✉️ <b>Сообщение в поддержку</b>\n\n"
+        f"👤 {user_name}\n"
+        f"🆔 <code>{user.id}</code>\n\n"
+        f"💬 {message.text}"
+    )
+    try:
+        await bot.send_message(
+            ADMIN_CHAT_ID, admin_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="↩️ Ответить пользователю",
+                    callback_data=f"support_reply_{user.id}"
+                )]
+            ])
+        )
+    except Exception as e:
+        logging.error("Не удалось отправить сообщение поддержки: %s", e)
+        await message.answer("😔 Не удалось отправить. Попробуйте позже.")
+        return
+    
+    await message.answer(
+        "✅ Сообщение отправлено! Мы ответим в ближайшее время.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
+        ])
+    )
+
+
+@dp.callback_query(lambda c: c.data == "support_cancel")
+async def support_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ Отправка сообщения отменена.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 В меню", callback_data="start")]
+        ])
+    )
+    await callback.answer()
+
+@dp.message(F.chat.id == ADMIN_CHAT_ID, F.reply_to_message)
+async def admin_reply_to_user(message: types.Message):
+    # Ищем user_id в тексте сообщения, на которое ответили
+    reply_text = message.reply_to_message.text or message.reply_to_message.caption or ""
+    # Ищем ID в <code>...</code>
+    import re
+    match = re.search(r"🆔 (\d+)", reply_text)
+    if not match:
+        return  # это не сообщение поддержки, игнорируем
+    
+    user_id = int(match.group(1))
+    try:
+        await bot.send_message(
+            user_id,
+            f"📬 <b>Ответ поддержки:</b>\n\n{message.text}",
+            parse_mode="HTML"
+        )
+        await message.reply("✅ Отправлено пользователю")
+    except Exception as e:
+        logging.error("Не удалось ответить пользователю %s: %s", user_id, e)
+        await message.reply("❌ Не удалось отправить. Возможно, пользователь заблокировал бота.")
 
 
 # ============ АДМИН: СТАТУСЫ ЗАЯВОК ============
