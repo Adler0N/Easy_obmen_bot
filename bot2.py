@@ -441,8 +441,7 @@ async def req_confirm(callback: types.CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-@dp.message(Command("msg"))
-async def cmd_msg(message: types.Message, state: FSMContext):
+async def show_support_prompt(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "✉️ <b>Связь с поддержкой</b>\n\n"
@@ -454,6 +453,26 @@ async def cmd_msg(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(SupportForm.waiting_message)
+
+
+@dp.message(Command("msg"))
+async def cmd_msg(message: types.Message, state: FSMContext):
+    await show_support_prompt(message, state)
+
+
+@dp.callback_query(lambda c: c.data == "support")
+async def callback_support(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "✉️ <b>Связь с поддержкой</b>\n\n"
+        "Напишите ваше сообщение — мы передадим его администратору.\n\n"
+        "Для отмены напишите /cancel.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="support_cancel")]
+        ]),
+        parse_mode="HTML"
+    )
+    await state.set_state(SupportForm.waiting_message)
+    await callback.answer()
 
 @dp.message(Command("req"))
 async def cmd_req(message: types.Message, state: FSMContext):
