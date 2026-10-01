@@ -556,6 +556,51 @@ async def admin_reply_to_user(message: types.Message):
         logging.error("Не удалось ответить пользователю %s: %s", user_id, e)
         await message.reply("❌ Не удалось отправить. Возможно, пользователь заблокировал бота.")
 
+@dp.callback_query(F.data.startswith("support_reply_"))
+async def support_reply_button(callback: types.CallbackQuery, state: FSMContext):
+    # Только админы могут пользоваться этой кнопкой
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+
+    target_user_id = int(callback.data.split("_")[2])
+
+    # Сохраняем, кому отвечаем
+    await state.update_data(reply_to_user_id=target_user_id)
+    await state.set_state(AdminReplyForm.waiting_text)
+
+    await callback.message.reply(
+        f"✏️ Введите текст ответа для пользователя <code>{target_user_id}</code>.\n\n"
+        f"Следующее сообщение уйдёт ему в личку. Для отмены — /cancel.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@dp.message(AdminReplyForm.waiting_text)
+async def admin_reply_text(message: types.Message, state: FSMContext):
+    # Команды не перехватываем — пусть /cancel и /start работают
+    if message.text and message.text.startswith("/"):
+        return
+
+    data = await state.get_data()
+    target_user_id = data.get("reply_to_user_id")
+    await state.clear()
+
+    if not target_user_id:
+        await message.reply("⚠️ Не знаю, кому отвечать. Попробуйте снова.")
+        return
+
+    try:
+        await bot.send_message(
+            target_user_id,
+            f"📬 <b>Ответ поддержки:</b>\n\n{message.text}",
+            parse_mode="HTML"
+        )
+        await message.reply("✅ Отправлено пользователю")
+    except Exception as e:
+        logging.error("Не удалось ответить пользователю %s: %s", target_user_id, e)
+        await message.reply("❌ Не удалось отправить. Возможно, пользователь заблокировал бота.")
 
 @dp.callback_query(F.data.startswith("adm_"))
 async def admin_status(callback: types.CallbackQuery):
